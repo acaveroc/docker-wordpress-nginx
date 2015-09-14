@@ -1,4 +1,56 @@
 #!/bin/bash
+
+# Disable Strict Host checking for non interactive git clones
+mkdir -p -m 0700 /root/.ssh
+cp -rf /opt/ngddeploy/$VIRTUAL_HOST/* /root/.ssh/ 
+echo -e "Host *\n\tStrictHostKeyChecking no\n" >> /root/.ssh/config
+
+
+# Setup git variables
+if [ ! -z "$GIT_EMAIL" ]; then
+ git config --global user.email "$GIT_EMAIL"
+fi
+if [ ! -z "$GIT_NAME" ]; then
+ git config --global user.name "$GIT_NAME"
+ git config --global push.default simple
+fi
+
+# Pull down code form git for our site!
+if [ ! -z "$GIT_REPO" ]; then
+  rm -rf /usr/share/nginx/html/*
+  rm -rf /usr/share/nginx/html/.* 2> /dev/null
+  if [ ! -z "$GIT_BRANCH" ]; then
+    git clone -b $GIT_BRANCH $GIT_REPO /usr/share/nginx/html/
+    chown -Rf www-data:www-data /usr/share/nginx/*
+  else
+    git clone $GIT_REPO /usr/share/nginx/html/
+    chown -Rf www-data:www-data /usr/share/nginx/*
+  fi
+  chown -Rf nginx.nginx /usr/share/nginx/*
+fi
+
+# Pull down database dump form git for our site!
+if [ ! -z "$GIT_DB_REPO" ]; then
+  mkdir -p /usr/share/mysql/dumps && rm -rf /usr/share/mysql/dumps/*
+  rm -rf /usr/share/mysql/dumps/.* 2> /dev/null
+  if [ ! -z "$GIT_DB_BRANCH" ]; then
+    git clone -b $GIT_DB_BRANCH $GIT_DB_REPO /usr/share/mysql/dumps/
+    chown -Rf mysql:mysql /usr/share/mysql/dumps/*
+  else
+    git clone $GIT_DB_REPO /usr/share/mysql/dumps/
+    chown -Rf mysql:mysql /usr/share/mysql/dumps/*
+  fi
+  chown -Rf mysql:mysql /usr/share/mysql/dumps/*
+  /usr/bin/mysqld_safe & sleep 10s
+  # Here we generate random passwords (thank you pwgen!). The first two are for mysql users, the last batch for random keys in wp-config.php
+  MYSQL_PASSWORD=`pwgen -c -n -1 12`
+  mysqladmin -u root password $MYSQL_PASSWORD
+  mysql -uroot -p$MYSQL_PASSWORD -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '$MYSQL_PASSWORD' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+  mysql -uroot -p$MYSQL_PASSWORD -e "CREATE DATABASE $WORDPRESS_DB; GRANT ALL PRIVILEGES ON $WORDPRESS_DB.* TO '$WORDPRESS_DB_USER'@'localhost' IDENTIFIED BY '$WORDPRESS_PASSWORD'; FLUSH PRIVILEGES;"
+  mysql -uroot -p$MYSQL_PASSWORD $WORDPRESS_DB < /usr/share/mysql/dumps/*.sql
+  killall mysqld
+fi
+
 if [ ! -f /usr/share/nginx/www/wp-config.php ]; then
   #mysql has to be started this way as it doesn't work to call from /etc/init.d
   /usr/bin/mysqld_safe &
